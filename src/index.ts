@@ -1,16 +1,13 @@
-// src/index.ts
 import { Env, WebhookBody } from './types';
 import { decodeJWS, createDiscordEmbed } from './utils';
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    // 1. Method check
     if (request.method !== 'POST') {
       return new Response('Method Not Allowed', { status: 405 });
     }
 
     try {
-      // 2. Parse JSON body
       let body: any;
       try {
         body = await request.json();
@@ -21,7 +18,7 @@ export default {
       let discordPayload;
 
       // -----------------------------------------------------------
-      // Branch A: JWS Encrypted Payload (Standard Notifications)
+      // Branch A: JWS Encrypted Payload
       // -----------------------------------------------------------
       if (body.signedPayload) {
         try {
@@ -35,16 +32,18 @@ export default {
       } 
       
       // -----------------------------------------------------------
-      // Branch B: Raw JSON Events (Builds, Status, Pings)
+      // Branch B: Raw JSON Events
       // -----------------------------------------------------------
       else if (body.data && body.data.type) {
         const eventType = body.data.type;
         const attr = body.data.attributes || {};
-        const rel = body.data.relationships?.instance; // Extract relationship data
+        const rel = body.data.relationships?.instance;
         
+        // 1. Extract API Link Early
+        const apiLink = rel?.links?.self || null;
+
         console.log(`Received Raw Event: ${eventType}`);
         
-        // --- Defaults ---
         let title = `App Store Connect Event: ${eventType}`;
         let description = "Received a raw status update.";
         let color = 3447003; // Default Blue
@@ -52,7 +51,7 @@ export default {
         
         const eventTime = attr.timestamp || new Date().toISOString();
 
-        // 1. Handle Build Upload State
+        // [Logic for Build Uploads]
         if (eventType === 'buildUploadStateUpdated') {
             const oldState = attr.oldState || 'UNKNOWN';
             const newState = attr.newState || 'UNKNOWN';
@@ -60,11 +59,11 @@ export default {
             if (newState === 'COMPLETE') {
                 title = "Build Processing Complete";
                 description = "The build is ready for TestFlight or Submission.";
-                color = 5763719; // Green
+                color = 5763719; 
             } else if (newState === 'FAILED') {
                 title = "Build Processing Failed";
                 description = "Apple failed to process the uploaded binary.";
-                color = 15548997; // Red
+                color = 15548997; 
             } else {
                 title = "Build State Updated";
                 description = `State changed: ${oldState} -> ${newState}`;
@@ -76,30 +75,38 @@ export default {
             );
         }
 
-        // 2. Handle App Version Status Update
+        // [Logic for App Status Updates]
         else if (eventType === 'appStoreVersionAppVersionStateUpdated') {
             const oldValue = attr.oldValue || 'UNKNOWN';
             const newValue = attr.newValue || 'UNKNOWN';
             const formattedStatus = newValue.replace(/_/g, ' ');
 
             switch (newValue) {
+                case 'PREPARE_FOR_SUBMISSION':
+                    title = "Prepare For Submission";
+                    color = 3447003; 
+                    break;
                 case 'WAITING_FOR_REVIEW':
                     title = "Waiting For Review";
-                    color = 16776960; // Yellow
+                    color = 16776960; 
                     break;
                 case 'IN_REVIEW':
                     title = "In Review";
-                    color = 15105570; // Orange
+                    color = 15105570; 
                     break;
                 case 'REJECTED':
                 case 'DEVELOPER_REJECTED':
                     title = "Submission Rejected";
-                    color = 15548997; // Red
+                    color = 15548997; 
                     break;
                 case 'READY_FOR_DISTRIBUTION':
                     title = "Ready For Distribution";
                     description = "The app is now Live on the App Store!";
-                    color = 5763719; // Bright Green
+                    color = 5763719; 
+                    break;
+                case 'READY_FOR_REVIEW':
+                    title = "Ready For Review";
+                    color = 3447003; 
                     break;
                 default:
                     title = `App Status: ${formattedStatus}`;
@@ -111,53 +118,34 @@ export default {
             );
         }
 
-        // 3. Handle Test Ping
         else if (eventType === 'webhookPingCreated') {
             title = "Webhook Configured Successfully";
             description = "Test signal received.";
-            color = 5763719; // Green
+            color = 5763719; 
         }
 
-        // =========================================================
-        // Technical Details (IDs and Links)
-        // =========================================================
-        
-        // Get Resource ID (Build ID or Version ID)
-        const targetId = rel?.data?.id;
-        // Get API Link
-        const apiLink = rel?.links?.self;
+        // --- Technical Details ---
 
+        // 2. Resource ID
+        const targetId = rel?.data?.id;
         if (targetId) {
-            // Add a blank field for line break
-            fields.push({ name: "", value: "", inline: false });
-            
-            fields.push({
+             fields.push({
                 name: "Resource ID",
                 value: `\`${targetId}\``,
-                inline: true
+                inline: false // Changed to false to separate from status
             });
         }
 
+        // 3. API Link (Standalone Field)
         if (apiLink) {
             fields.push({
-                name: "API Resource",
-                value: `[View JSON Data](${apiLink})`,
-                inline: true
+                name: "Link",
+                value: apiLink, // Display the full raw URL
+                inline: false   // Force it to be on its own line
             });
         }
 
-        // Event ID (Webhook ID)
-        if (body.data.id) {
-             fields.push({
-                name: "Event ID",
-                value: `\`${body.data.id}\``,
-                inline: true
-            });
-        }
-
-        // =========================================================
-
-        // Raw Payload (Debug)
+        // 4. Raw Payload
         const rawJsonString = JSON.stringify(body, null, 2);
         fields.push({
              name: "Full Raw Payload",
@@ -168,6 +156,7 @@ export default {
         discordPayload = {
           embeds: [{
             title: title,
+            url: apiLink || undefined, // 4. Make the Title clickable!
             description: description,
             color: color,
             fields: fields,
@@ -177,16 +166,13 @@ export default {
         };
       } 
       
-      // -----------------------------------------------------------
-      // Branch C: Unknown Format
-      // -----------------------------------------------------------
       else {
+        // Unknown Branch
         const unknownBodyString = JSON.stringify(body, null, 2);
         console.error("Unknown Payload Format:", unknownBodyString);
         return new Response('Bad Request: Unknown Payload Format', { status: 400 });
       }
 
-      // Send to Discord
       if (!env.DISCORD_WEBHOOK_URL) {
         throw new Error("DISCORD_WEBHOOK_URL is not set");
       }
