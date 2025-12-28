@@ -1,6 +1,6 @@
 # App Store Connect to Discord Webhook Bridge
 
-A lightweight, serverless bridge running on **Cloudflare Workers** that forwards App Store Connect (ASC) notifications to **Discord**.
+A lightweight, serverless bridge running on [**Cloudflare Workers**](https://workers.cloudflare.com/) that forwards [**App Store Connect**](https://appstoreconnect.apple.com/) notifications to [**Discord**](https://discord.com/).
 
 It handles the complex **JWS (JSON Web Signature)** decoding required by Apple's API and formats the notifications into beautiful Discord Embeds.
 
@@ -13,7 +13,7 @@ cd asc-webhook-bridge
 pnpm install
 ```
 #### 2. Configure Secrets
-```
+```bash
 npx wrangler secret put DISCORD_WEBHOOK_URL
 ```
 
